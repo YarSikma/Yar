@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Simulasi DDoS dengan WAF dan Firewall (Edukasi)</title>
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      background-color: #111;
+      color: #eee;
+      font-family: monospace;
+      overflow: hidden;
+    }
+    #info {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 5px;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="info">
+    <h2>Simulasi DDoS Target Menggunakan WAF & Firewall</h2>
+    <div>Total Requests: <span id="total">0</span></div>
+    <div>WAF Blocked: <span id="wafBlocked">0</span></div>
+    <div>Firewall Blocked: <span id="firewallBlocked">0</span></div>
+    <div>Server Hits: <span id="hits">0</span></div>
+    <div>WAF Energy: <span id="wafEnergy">100</span></div>
+    <div>Firewall Energy: <span id="firewallEnergy">100</span></div>
+  </div>
+  <canvas id="canvas"></canvas>
+  
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // Pengaturan target (server)
+    const server = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      radius: 30
+    };
+
+    // Pengaturan Firewall (lapisan dalam)
+    const firewall = {
+      radius: server.radius + 30, // misalnya 60
+      maxEnergy: 100,
+      energy: 100,
+      rechargeRate: 0.05  // laju pemulihan per frame
+    };
+
+    // Pengaturan WAF (lapisan luar)
+    const waf = {
+      radius: server.radius + 70, // misalnya 100
+      maxEnergy: 100,
+      energy: 100,
+      rechargeRate: 0.03  // laju pemulihan per frame
+    };
+
+    // Variabel statistik
+    let totalRequests = 0;
+    let wafBlocked = 0;
+    let firewallBlocked = 0;
+    let serverHits = 0;
+
+    // Elemen informasi statistik
+    const totalElem = document.getElementById("total");
+    const wafBlockedElem = document.getElementById("wafBlocked");
+    const firewallBlockedElem = document.getElementById("firewallBlocked");
+    const hitsElem = document.getElementById("hits");
+    const wafEnergyElem = document.getElementById("wafEnergy");
+    const firewallEnergyElem = document.getElementById("firewallEnergy");
+
+    // Kelas Request untuk mensimulasikan paket serangan
+    class Request {
+      constructor() {
+        // Muncul dari salah satu tepi layar secara acak
+        const edge = Math.floor(Math.random() * 4);
+        if (edge === 0) {         // Atas
+          this.x = Math.random() * canvas.width;
+          this.y = -10;
+        } else if (edge === 1) {  // Kanan
+          this.x = canvas.width + 10;
+          this.y = Math.random() * canvas.height;
+        } else if (edge === 2) {  // Bawah
+          this.x = Math.random() * canvas.width;
+          this.y = canvas.height + 10;
+        } else {                  // Kiri
+          this.x = -10;
+          this.y = Math.random() * canvas.height;
+        }
+        this.speed = 1 + Math.random() * 2; // Kecepatan antara 1 hingga 3
+        this.size = 3;
+        // Flag untuk memastikan pengecekan hanya dilakukan sekali per lapisan
+        this.wafChecked = false;
+        this.firewallChecked = false;
+        this.blocked = false;
+        this.blockedBy = ""; // "waf" atau "firewall"
+      }
+      
+      update() {
+        const dx = server.x - this.x;
+        const dy = server.y - this.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        // Pengecekan WAF: saat memasuki area WAF dan belum dicek
+        if (!this.wafChecked && distance < waf.radius) {
+          this.wafChecked = true;
+          // Peluang blok WAF, misalnya 70% bila energi penuh
+          let blockChance = 0.7 * (waf.energy / waf.maxEnergy);
+          if (Math.random() < blockChance) {
+            this.blocked = true;
+            this.blockedBy = "waf";
+            wafBlocked++;
+            // Mengurangi energi WAF
+            waf.energy = Math.max(0, waf.energy - 2);
+          }
+        }
+        
+        // Pengecekan Firewall: saat memasuki area Firewall dan belum dicek
+        if (!this.firewallChecked && distance < firewall.radius && !this.blocked) {
+          this.firewallChecked = true;
+          // Peluang blok Firewall, misalnya 80% bila energi penuh
+          let blockChance = 0.8 * (firewall.energy / firewall.maxEnergy);
+          if (Math.random() < blockChance) {
+            this.blocked = true;
+            this.blockedBy = "firewall";
+            firewallBlocked++;
+            // Mengurangi energi Firewall
+            firewall.energy = Math.max(0, firewall.energy - 3);
+          }
+        }
+        
+        // Jika request tidak diblokir, ia terus bergerak menuju server
+        if (!this.blocked) {
+          const ndx = dx / distance;
+          const ndy = dy / distance;
+          this.x += ndx * this.speed;
+          this.y += ndy * this.speed;
+        }
+      }
+      
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        // Warna request berbeda berdasarkan status proteksi
+        if (this.blocked) {
+          ctx.fillStyle = (this.blockedBy === "waf") ? "#00ffff" : "#ff00ff";
+        } else {
+          ctx.fillStyle = "#ff4444";
+        }
+        ctx.fill();
+      }
+    }
+
+    let requests = [];
+
+    function animate() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Gambar server
+      ctx.beginPath();
+      ctx.arc(server.x, server.y, server.radius, 0, Math.PI * 2);
+      ctx.fillStyle = "#00ff00";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "#ffffff";
+      ctx.stroke();
+
+      // Gambar Firewall (lapisan dalam) dengan garis transparan
+      ctx.beginPath();
+      ctx.arc(server.x, server.y, firewall.radius, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(255, 165, 0, 0.5)"; // oranye
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      // Gambar WAF (lapisan luar) dengan garis putus-putus
+      ctx.beginPath();
+      ctx.setLineDash([5, 5]);
+      ctx.arc(server.x, server.y, waf.radius, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0, 150, 255, 0.5)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.setLineDash([]); // reset dash
+
+      // Tambahkan request baru secara acak untuk simulasi serangan
+      if (Math.random() < 0.3) {
+        requests.push(new Request());
+        totalRequests++;
+      }
+
+      // Update dan gambar tiap request
+      for (let i = 0; i < requests.length; i++) {
+        const req = requests[i];
+        req.update();
+        req.draw();
+
+        // Jika request mencapai server (jarak kurang dari radius server)
+        const dx = server.x - req.x;
+        const dy = server.y - req.y;
+        if (Math.sqrt(dx * dx + dy * dy) < server.radius) {
+          if (!req.blocked) {
+            serverHits++;
+          }
+          // Reset request untuk mensimulasikan serangan berulang
+          requests[i] = new Request();
+        }
+
+        // Jika request keluar dari layar, reset posisinya
+        if (req.x < -20 || req.x > canvas.width + 20 || req.y < -20 || req.y > canvas.height + 20) {
+          requests[i] = new Request();
+        }
+      }
+
+      // Recharge energi untuk masing-masing lapisan
+      if (waf.energy < waf.maxEnergy) {
+        waf.energy += waf.rechargeRate;
+        if (waf.energy > waf.maxEnergy) waf.energy = waf.maxEnergy;
+      }
+      if (firewall.energy < firewall.maxEnergy) {
+        firewall.energy += firewall.rechargeRate;
+        if (firewall.energy > firewall.maxEnergy) firewall.energy = firewall.maxEnergy;
+      }
+
+      // Update tampilan statistik
+      totalElem.textContent = totalRequests;
+      wafBlockedElem.textContent = wafBlocked;
+      firewallBlockedElem.textContent = firewallBlocked;
+      hitsElem.textContent = serverHits;
+      wafEnergyElem.textContent = waf.energy.toFixed(2);
+      firewallEnergyElem.textContent = firewall.energy.toFixed(2);
+
+      requestAnimationFrame(animate);
+    }
+
+    animate();
+
+    // Menyesuaikan ukuran canvas saat window diresize
+    window.addEventListener("resize", function () {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      server.x = canvas.width / 2;
+      server.y = canvas.height / 2;
+    });
+  </script>
+</body>
+</html>
